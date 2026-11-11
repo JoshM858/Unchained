@@ -48,7 +48,17 @@ scripts/build-demo.sh _site
 
 The demo has two tabs: the remote client, and a concept for the host
 machine's own console. Both run on simulated data from `web/demo.js`; the
-host console is not served by the daemon yet.
+host console is not served by the daemon yet. The published copy lives at
+<https://joshm858.github.io/unbound/>.
+
+The `Interface demo` workflow (`.github/workflows/pages.yml`) publishes it.
+One-time setup: in the repository, go to Settings → Pages and set **Source**
+to **GitHub Actions**. Until that is set, the deploy step fails. The workflow
+runs on pushes to `main` and to the feature branches it lists, and on demand
+from the Actions tab.
+
+Pages serves only the static demo. `client.html` redirects to demo mode there,
+because nothing is listening for a daemon on that host.
 
 ## Reaching it from elsewhere
 
