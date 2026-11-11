@@ -99,6 +99,32 @@ make this matter more than it does for hosted models.
 
 A snapshot on a shadow Git ref before each mutation; one command rewinds.
 
+## Interface
+
+The look takes its structure from sci-fi terminal dashboards: a central
+console framed by live telemetry, with a file browser underneath. It is
+built from scratch; no third-party assets.
+
+- **Centre:** session tabs, the conversation, tool calls and results as terminal blocks, the composer.
+- **Left, the host:** clock, uptime, CPU graph and per-core bars, RAM, disk, GPU and VRAM when present, top processes. Fed by `GET /api/status`, sampled every two seconds.
+- **Right, the agent:** model, permission mode, context gauge, speed, session and client counts, pending approvals.
+- **Bottom:** the workspace file browser (`GET /api/workspaces/{name}/files`) with a read-only viewer, and the files changed in the current session.
+- **Rules:** one accent colour per theme plus an alert colour reserved for approvals and errors; glow only on chrome, never on conversation text; reduced-motion respected; no sound.
+- **Phone:** one view at a time (host, chat, agent, files) behind a bottom bar, with a badge when an approval is waiting.
+
+The client talks to a backend object. `?demo` swaps the real HTTP and
+WebSocket backend for an in-browser simulation that speaks the same event
+protocol, which is what the GitHub Pages demo runs.
+
+**Host console (concept).** `web/host.html` sketches what the host machine
+shows on its own display: sessions across all workspaces, a merged activity
+feed, model server state, linked devices, local approvals and a stop-all
+control. It runs on simulated data only. Making it real needs the model
+adapter, device pairing and a cross-session event stream.
+
+Not yet built: git status badges in the file browser, diff view, the
+terminal UI.
+
 ## Remote access and security model
 
 A service that edits files and runs commands on request is remote code

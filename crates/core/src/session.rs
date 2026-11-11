@@ -16,11 +16,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, oneshot};
-use unchained_protocol::{Event, EventKind, SessionInfo, WorkspaceInfo};
+use unchained_protocol::{Event, EventKind, FileEntry, SessionInfo, WorkspaceInfo};
 
 use crate::model::ModelAdapter;
-use crate::permissions::{Policy, Verdict};
-use crate::tools::ToolRegistry;
+use crate::permissions::{Mode, Policy, Verdict};
+use crate::tools::{ReadFile, Tool, ToolRegistry};
 use crate::workspace::Workspace;
 
 /// Model round-trips allowed in one turn before the loop stops itself.
@@ -28,6 +28,8 @@ const MAX_STEPS: usize = 32;
 /// An unanswered permission request is denied after this long.
 const DEFAULT_APPROVAL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const BROADCAST_CAPACITY: usize = 1024;
+/// Most entries a single directory listing returns.
+const MAX_DIR_ENTRIES: usize = 1000;
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -81,6 +83,11 @@ impl Session {
             running: self.running.load(Ordering::SeqCst),
             last_seq: self.events.lock().unwrap().len() as u64,
         }
+    }
+
+    /// Permission requests currently waiting for an answer.
+    pub fn pending_approvals(&self) -> usize {
+        self.pending.lock().unwrap().len()
     }
 
     /// Events with `seq > after`, plus a receiver for everything later.
@@ -307,6 +314,58 @@ impl SessionManager {
 
     fn workspace(&self, name: &str) -> Option<&Workspace> {
         self.workspaces.iter().find(|w| w.name() == name)
+    }
+
+    pub fn mode(&self) -> Mode {
+        self.deps.policy.mode
+    }
+
+    /// Permission requests waiting across every session.
+    pub fn pending_approvals(&self) -> usize {
+        self.sessions
+            .read()
+            .unwrap()
+            .values()
+            .map(|s| s.pending_approvals())
+            .sum()
+    }
+
+    /// List a directory inside a workspace: directories first, then by name.
+    pub async fn list_files(&self, workspace: &str, rel: &str) -> Result<Vec<FileEntry>> {
+        let ws = self
+            .workspace(workspace)
+            .ok_or_else(|| anyhow!("unknown workspace '{workspace}'"))?;
+        let path = ws.resolve(rel)?;
+        let mut dir = tokio::fs::read_dir(&path)
+            .await
+            .with_context(|| rel.to_string())?;
+        let mut entries = Vec::new();
+        while let Some(entry) = dir.next_entry().await? {
+            if entries.len() >= MAX_DIR_ENTRIES {
+                break;
+            }
+            // Symlinks are listed as files; opening one still goes through
+            // `Workspace::resolve`, which refuses targets outside the root.
+            let Ok(meta) = entry.metadata().await else {
+                continue;
+            };
+            entries.push(FileEntry {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                dir: meta.is_dir(),
+                size: if meta.is_file() { meta.len() } else { 0 },
+            });
+        }
+        entries.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.name.cmp(&b.name)));
+        Ok(entries)
+    }
+
+    /// Read a text file inside a workspace, with the same limits as the
+    /// agent's `read_file` tool.
+    pub async fn read_file(&self, workspace: &str, rel: &str) -> Result<String> {
+        let ws = self
+            .workspace(workspace)
+            .ok_or_else(|| anyhow!("unknown workspace '{workspace}'"))?;
+        ReadFile.run(ws, &serde_json::json!({ "path": rel })).await
     }
 
     pub fn create(&self, workspace: &str) -> Result<Arc<Session>> {
@@ -593,5 +652,27 @@ mod tests {
         )));
         assert!(!f.ws.root().join("a.txt").exists());
         assert!(m.create("nope").is_err());
+    }
+
+    #[tokio::test]
+    async fn browsing_is_confined_to_registered_workspaces() {
+        let f = fixture();
+        fs::create_dir(f.ws.root().join("src")).unwrap();
+        let m = manager(&f, Mode::Ask, Duration::from_secs(5));
+        let names: Vec<_> = m
+            .list_files("demo", ".")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.name, e.dir, e.size))
+            .collect();
+        assert_eq!(
+            names,
+            vec![("src".into(), true, 0), ("hello.txt".into(), false, 8)]
+        );
+        assert_eq!(m.read_file("demo", "hello.txt").await.unwrap(), "hi there");
+        assert!(m.list_files("demo", "..").await.is_err());
+        assert!(m.read_file("demo", "/etc/passwd").await.is_err());
+        assert!(m.list_files("other", ".").await.is_err());
     }
 }

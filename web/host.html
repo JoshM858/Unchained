@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Unchained Host Console</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="host-page">
+  <div id="console">
+    <header class="panel">
+      <span class="brand">Unchained</span>
+      <span class="muted">HOST CONSOLE // <span id="h-name">—</span></span>
+      <span class="big" id="clock">--:--:--</span>
+      <span class="muted" id="date"></span>
+      <span class="sim">CONCEPT · SIMULATED DATA</span>
+    </header>
+
+    <div class="col" id="host-left">
+      <div class="panel">
+        <h2>System</h2>
+        <dl class="kv">
+          <dt>Uptime</dt><dd id="h-uptime">—</dd>
+          <dt>Load</dt><dd id="h-load">—</dd>
+          <dt>OS</dt><dd id="h-os">—</dd>
+        </dl>
+      </div>
+      <div class="panel">
+        <h2>CPU <span class="tag" id="h-core-count"></span></h2>
+        <div class="readout"><span>Usage</span><b id="h-cpu">—</b></div>
+        <svg class="spark" id="h-cpu-spark" aria-hidden="true"></svg>
+        <div class="cores" id="h-cores" aria-hidden="true"></div>
+      </div>
+      <div class="panel" id="h-gpu-panel">
+        <h2>GPU <span class="tag" id="h-gpu-temp"></span></h2>
+        <div class="readout"><span id="h-gpu-name">GPU</span><b id="h-gpu">—</b></div>
+        <svg class="spark" id="h-gpu-spark" aria-hidden="true"></svg>
+        <div class="readout"><span>VRAM</span><b id="h-vram">—</b></div>
+        <div class="bar" id="h-vram-bar"><i></i></div>
+      </div>
+      <div class="panel">
+        <h2>Memory</h2>
+        <div class="readout"><span>RAM</span><b id="h-mem">—</b></div>
+        <div class="bar" id="h-mem-bar"><i></i></div>
+        <div class="readout"><span>Disk</span><b id="h-disk">—</b></div>
+        <div class="bar" id="h-disk-bar"><i></i></div>
+      </div>
+      <div class="panel">
+        <h2>Processes</h2>
+        <table class="procs"><tbody id="h-procs"></tbody></table>
+      </div>
+    </div>
+
+    <div class="mid" id="host-mid">
+      <div class="panel">
+        <h2>Sessions <span class="tag" id="session-count"></span></h2>
+        <table class="grid">
+          <thead><tr><th>ID</th><th>Workspace</th><th>State</th><th>Events</th><th>Started</th></tr></thead>
+          <tbody id="session-rows"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>Activity <span class="tag">all sessions</span></h2>
+        <div class="feed" id="activity" aria-live="off"></div>
+      </div>
+      <div class="panel">
+        <h2>Daemon log</h2>
+        <div class="feed muted" id="daemon-log" aria-live="off"></div>
+      </div>
+    </div>
+
+    <div class="col" id="host-right">
+      <div class="panel">
+        <h2>Model server</h2>
+        <dl class="kv">
+          <dt>Model</dt><dd id="m-name">—</dd>
+          <dt>Quant</dt><dd>Q5_K_M</dd>
+          <dt>Endpoint</dt><dd>127.0.0.1:8080</dd>
+          <dt>Queue</dt><dd id="m-queue">0</dd>
+          <dt>Speed</dt><dd id="m-tps">—</dd>
+        </dl>
+        <svg class="spark" id="m-tps-spark" aria-hidden="true"></svg>
+        <div class="readout"><span>Context</span><b id="m-ctx">—</b></div>
+        <div class="bar" id="m-ctx-bar"><i></i></div>
+      </div>
+      <div class="panel">
+        <h2>Approvals <span class="tag" id="ask-count">0</span></h2>
+        <ul class="asks" id="asks"></ul>
+      </div>
+      <div class="panel">
+        <h2>Remote access</h2>
+        <dl class="kv">
+          <dt>Bind</dt><dd>100.64.0.7:7878</dd>
+          <dt>Via</dt><dd>private overlay</dd>
+          <dt>Public</dt><dd>not exposed</dd>
+          <dt>Mode</dt><dd>ask</dd>
+        </dl>
+      </div>
+      <div class="panel">
+        <h2>Devices <span class="tag">2 linked</span></h2>
+        <ul class="devices">
+          <li><span>Laptop · browser</span><button type="button" disabled>Revoke</button><small>active now</small></li>
+          <li><span>Phone · browser</span><button type="button" disabled>Revoke</button><small id="phone-seen">seen 2m ago</small></li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h2>Control</h2>
+        <button id="stop-all" type="button" class="danger">Stop all</button>
+        <div class="swatches" role="group" aria-label="Theme">
+          <button type="button" data-theme-pick="tron" aria-label="Tron theme"></button>
+          <button type="button" data-theme-pick="amber" aria-label="Amber theme"></button>
+          <button type="button" data-theme-pick="matrix" aria-label="Matrix theme"></button>
+          <button type="button" data-theme-pick="ember" aria-label="Ember theme"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="hud.js"></script>
+  <script src="demo.js"></script>
+  <script src="host.js"></script>
+</body>
+</html>

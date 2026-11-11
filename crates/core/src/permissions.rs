@@ -33,6 +33,17 @@ pub enum Mode {
     FullAuto,
 }
 
+impl Mode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Mode::Plan => "plan",
+            Mode::Ask => "ask",
+            Mode::AutoEdit => "auto-edit",
+            Mode::FullAuto => "full-auto",
+        }
+    }
+}
+
 impl FromStr for Mode {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {

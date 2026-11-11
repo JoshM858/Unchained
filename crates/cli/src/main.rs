@@ -122,11 +122,7 @@ async fn main() -> Result<()> {
                 tracing::info!("workspace {} -> {}", w.name, w.root);
             }
             tracing::info!("sign in with the token from `unchained token`");
-            let state = AppState {
-                manager: Arc::new(manager),
-                token: token.into(),
-            };
-            unchained_server::serve(state, bind, allow_remote).await?;
+            unchained_server::serve(AppState::new(manager, token), bind, allow_remote).await?;
         }
     }
     Ok(())

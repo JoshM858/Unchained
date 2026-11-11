@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Unchained Interface Demo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <span class="brand">Unchained</span>
+      <div role="tablist" aria-label="Demo views">
+        <button type="button" role="tab" id="tab-client" aria-controls="frame-client" aria-selected="true">Remote client</button>
+        <button type="button" role="tab" id="tab-host" aria-controls="frame-host" aria-selected="false">Host machine</button>
+      </div>
+      <p id="blurb"></p>
+    </header>
+    <iframe id="frame-client" title="Remote client" src="client.html?demo"></iframe>
+    <iframe id="frame-host" title="Host machine console" src="host.html" hidden></iframe>
+  </div>
+  <script src="hud.js"></script>
+  <script src="shell.js"></script>
+</body>
+</html>

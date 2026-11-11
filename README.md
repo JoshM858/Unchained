@@ -31,6 +31,25 @@ Open <http://127.0.0.1:7878>, paste the token, start a session. With the stub
 model, try `/ls`, `/read <file>` and `/write <file> <text>`. Writes pause for
 your approval; reload the page mid-approval and the request is still waiting.
 
+## Interface
+
+The web UI is a dense, dark HUD: the conversation in the centre, live host
+telemetry on the left, agent state and pending approvals on the right, and a
+workspace file browser along the bottom. On a phone it collapses to one view
+at a time. Four colour themes; a focus mode hides everything but the
+conversation.
+
+To see it without running anything, open `/?demo` on a running daemon, or
+build the static demo that GitHub Pages publishes:
+
+```bash
+scripts/build-demo.sh _site
+```
+
+The demo has two tabs: the remote client, and a concept for the host
+machine's own console. Both run on simulated data from `web/demo.js`; the
+host console is not served by the daemon yet.
+
 ## Reaching it from elsewhere
 
 The daemon is a service that changes files on request, so it listens on
@@ -49,7 +68,8 @@ In order of preference:
 | `crates/core` | Agent loop, tools, permission engine, workspaces, session store |
 | `crates/server` | Gateway: auth, HTTP and WebSocket API, embedded web UI |
 | `crates/cli` | The `unchained` binary (`serve`, `token`) |
-| `web/` | The web client. Plain HTML, CSS and JS; no build step |
+| `web/` | The web client, the simulated demo backend and the host-console concept. Plain HTML, CSS and JS; no build step |
+| `scripts/build-demo.sh` | Assembles the static interface demo |
 | `docs/DESIGN.md` | Vision, architecture, security model, roadmap |
 
 ## Permission modes

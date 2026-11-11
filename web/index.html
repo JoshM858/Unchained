@@ -4,42 +4,135 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Unchained</title>
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <section id="login" hidden>
-    <form id="login-form">
+    <form id="login-form" class="panel">
       <h1>Unchained</h1>
-      <p>Paste the access token from <code>unchained token</code> on the host.</p>
-      <input id="token" type="password" autocomplete="current-password" placeholder="Access token" required>
-      <button type="submit">Sign in</button>
-      <p id="login-error" class="error" hidden>That token was not accepted.</p>
+      <p>Remote link requires authorisation. Paste the access token from <code>unchained token</code> on the host.</p>
+      <input id="token" type="password" autocomplete="current-password" placeholder="ACCESS TOKEN" aria-label="Access token" required>
+      <button type="submit">Establish link</button>
+      <p id="login-error" class="alert" hidden>Token rejected.</p>
     </form>
   </section>
 
-  <div id="app" hidden>
-    <aside>
-      <h1>Unchained</h1>
-      <form id="new-session">
-        <select id="workspace" aria-label="Workspace"></select>
-        <button type="submit">New session</button>
-      </form>
-      <ul id="sessions"></ul>
-      <button id="logout" class="quiet">Sign out</button>
+  <div id="app" data-view="chat" hidden>
+    <aside id="left" aria-label="Host machine">
+      <div class="panel">
+        <h2>Host <span class="tag" id="h-name">—</span></h2>
+        <div class="big" id="clock">--:--:--</div>
+        <div class="muted" id="date"></div>
+        <dl class="kv">
+          <dt>Uptime</dt><dd id="h-uptime">—</dd>
+          <dt>Load</dt><dd id="h-load">—</dd>
+          <dt>OS</dt><dd id="h-os">—</dd>
+        </dl>
+      </div>
+      <div class="panel">
+        <h2>CPU <span class="tag" id="h-core-count"></span></h2>
+        <div class="readout"><span>Usage</span><b id="h-cpu">—</b></div>
+        <svg class="spark" id="h-cpu-spark" aria-hidden="true"></svg>
+        <div class="cores" id="h-cores" aria-hidden="true"></div>
+      </div>
+      <div class="panel">
+        <h2>Memory</h2>
+        <div class="readout"><span>RAM</span><b id="h-mem">—</b></div>
+        <div class="bar" id="h-mem-bar"><i></i></div>
+        <div class="readout"><span>Disk</span><b id="h-disk">—</b></div>
+        <div class="bar" id="h-disk-bar"><i></i></div>
+      </div>
+      <div class="panel" id="h-gpu-panel" hidden>
+        <h2>GPU <span class="tag" id="h-gpu-temp"></span></h2>
+        <div class="readout"><span id="h-gpu-name">GPU</span><b id="h-gpu">—</b></div>
+        <svg class="spark" id="h-gpu-spark" aria-hidden="true"></svg>
+        <div class="readout"><span>VRAM</span><b id="h-vram">—</b></div>
+        <div class="bar" id="h-vram-bar"><i></i></div>
+      </div>
+      <div class="panel">
+        <h2>Processes</h2>
+        <table class="procs"><tbody id="h-procs"></tbody></table>
+      </div>
     </aside>
-    <main>
-      <header>
-        <span id="title">No session selected</span>
-        <span id="status"></span>
-      </header>
+
+    <main id="main" class="panel">
+      <div id="tabs">
+        <div id="tablist" role="tablist" aria-label="Sessions"></div>
+        <form id="new-session">
+          <select id="workspace" aria-label="Workspace"></select>
+          <button type="submit" title="New session" aria-label="New session">+</button>
+        </form>
+        <button id="focus" type="button" title="Toggle focus mode">Focus</button>
+      </div>
+      <div id="linkbar"><span id="title">—</span><span id="status">offline</span></div>
       <div id="log" aria-live="polite"></div>
       <form id="composer">
-        <textarea id="input" rows="2" placeholder="Message the agent" disabled></textarea>
+        <textarea id="input" rows="2" placeholder="Message the agent" aria-label="Message the agent" disabled></textarea>
         <button id="send" type="submit" disabled>Send</button>
         <button id="stop" type="button" class="danger" hidden>Stop</button>
       </form>
     </main>
+
+    <aside id="right" aria-label="Agent">
+      <div class="panel">
+        <h2>Agent <span class="tag" id="a-version"></span></h2>
+        <dl class="kv">
+          <dt>Model</dt><dd id="a-model">—</dd>
+          <dt>Mode</dt><dd id="a-mode">—</dd>
+          <dt>Speed</dt><dd id="a-tps">—</dd>
+        </dl>
+        <svg class="spark" id="a-tps-spark" aria-hidden="true"></svg>
+        <div class="readout"><span>Context</span><b id="a-ctx">—</b></div>
+        <div class="bar" id="a-ctx-bar"><i></i></div>
+      </div>
+      <div class="panel">
+        <h2>Link</h2>
+        <dl class="kv">
+          <dt>Sessions</dt><dd id="a-sessions">—</dd>
+          <dt>Running</dt><dd id="a-running">—</dd>
+          <dt>Clients</dt><dd id="a-clients">—</dd>
+        </dl>
+      </div>
+      <div class="panel" id="approvals-panel">
+        <h2>Approvals <span class="tag" id="a-pending">0</span></h2>
+        <div class="stack" id="approvals"><span class="muted">Nothing waiting.</span></div>
+      </div>
+      <div class="panel">
+        <h2>Display</h2>
+        <div class="swatches" role="group" aria-label="Theme">
+          <button type="button" data-theme-pick="tron" aria-label="Tron theme"></button>
+          <button type="button" data-theme-pick="amber" aria-label="Amber theme"></button>
+          <button type="button" data-theme-pick="matrix" aria-label="Matrix theme"></button>
+          <button type="button" data-theme-pick="ember" aria-label="Ember theme"></button>
+        </div>
+        <button id="logout" type="button">Sign out</button>
+      </div>
+    </aside>
+
+    <section id="files" class="panel" aria-label="Files">
+      <h2>Filesystem <span class="tag" id="fs-root"></span></h2>
+      <div id="crumbs"></div>
+      <div id="grid"></div>
+    </section>
+    <section id="changes" class="panel" aria-label="Changes">
+      <h2>Changes <span class="tag" id="change-count">0</span></h2>
+      <ul id="changelist"></ul>
+    </section>
+
+    <nav id="mobile-nav" aria-label="Views">
+      <button type="button" data-view="host">Host</button>
+      <button type="button" data-view="chat" class="active">Chat</button>
+      <button type="button" data-view="agent">Agent</button>
+      <button type="button" data-view="files">Files</button>
+    </nav>
+
+    <div id="viewer" class="panel" role="dialog" aria-modal="true" aria-labelledby="viewer-title" hidden>
+      <h2><span id="viewer-title"></span><button id="viewer-close" type="button">Close</button></h2>
+      <pre id="viewer-body"></pre>
+    </div>
   </div>
-  <script src="/app.js"></script>
+  <script src="hud.js"></script>
+  <script src="demo.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

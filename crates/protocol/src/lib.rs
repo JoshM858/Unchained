@@ -83,6 +83,14 @@ pub struct WorkspaceInfo {
     pub root: String,
 }
 
+/// One entry in a workspace directory listing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FileEntry {
+    pub name: String,
+    pub dir: bool,
+    pub size: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSession {
     pub workspace: String,

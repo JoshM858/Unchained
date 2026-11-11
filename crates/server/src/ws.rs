@@ -2,6 +2,7 @@
 //! from `?after=<seq>` and then follows it live; closing it never stops the
 //! session.
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -34,7 +35,11 @@ pub async fn handler(
     };
     upgrade
         .max_message_size(MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| client_loop(socket, session, params.after.unwrap_or(0)))
+        .on_upgrade(move |socket| async move {
+            st.clients.fetch_add(1, Ordering::Relaxed);
+            client_loop(socket, session, params.after.unwrap_or(0)).await;
+            st.clients.fetch_sub(1, Ordering::Relaxed);
+        })
 }
 
 async fn send_event(socket: &mut WebSocket, event: &Event) -> bool {
