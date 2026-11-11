@@ -8,64 +8,127 @@
 </head>
 <body>
   <section id="login" hidden>
-    <form id="login-form" class="panel">
+    <form id="login-form" class="login">
       <h1>Unchained</h1>
-      <p>Remote link requires authorisation. Paste the access token from <code>unchained token</code> on the host.</p>
-      <input id="token" type="password" autocomplete="current-password" placeholder="ACCESS TOKEN" aria-label="Access token" required>
-      <button type="submit">Establish link</button>
+      <p>Paste the access token from <code>unchained token</code> on the host.</p>
+      <input id="token" type="password" autocomplete="current-password" placeholder="Access token" aria-label="Access token" required>
+      <button type="submit" class="primary">Sign in</button>
       <p id="login-error" class="alert" hidden>Token rejected.</p>
     </form>
   </section>
 
   <div id="app" data-view="chat" hidden>
-    <header id="strip" class="panel" aria-label="Status">
-      <span class="brand">Unchained</span>
-      <span class="meta" title="Host"><b id="h-name">—</b></span>
-      <span class="meta"><span class="k">cpu</span> <b id="h-cpu">—</b></span>
-      <span class="meta"><span class="k">ram</span> <b id="h-mem">—</b></span>
-      <span class="meta"><span class="k">disk</span> <b id="h-disk">—</b></span>
-      <span class="meta" id="h-gpu-panel" hidden><span class="k" id="h-gpu-name">gpu</span> <b id="h-gpu">—</b></span>
-      <span class="meta"><span class="k">up</span> <b id="h-uptime">—</b></span>
-      <span class="meta"><span class="k">mode</span> <b id="a-mode">—</b></span>
-      <span class="meta"><span class="k">running</span> <b id="a-running">0</b></span>
-      <span class="meta"><span class="k">clients</span> <b id="a-clients">0</b></span>
-      <button id="approvals-btn" type="button" class="danger" hidden>Approvals <b id="a-pending">0</b></button>
+    <header id="top">
+      <button id="toggle-left" type="button" class="icon" aria-label="Toggle sidebar" title="Sidebar">&#9776;</button>
+      <span id="title" class="title">—</span>
       <span class="spacer"></span>
-      <div class="swatches" role="group" aria-label="Theme">
-        <button type="button" data-theme-pick="tron" aria-label="Tron theme"></button>
-        <button type="button" data-theme-pick="amber" aria-label="Amber theme"></button>
-        <button type="button" data-theme-pick="matrix" aria-label="Matrix theme"></button>
-        <button type="button" data-theme-pick="ember" aria-label="Ember theme"></button>
-      </div>
-      <button id="logout" type="button">Sign out</button>
+      <span class="status-line" aria-label="Host status">
+        <span><span class="k">cpu</span> <b id="h-cpu">—</b></span>
+        <span><span class="k">ram</span> <b id="h-mem">—</b></span>
+        <span><span class="k">mode</span> <b id="a-mode">—</b></span>
+        <span><span class="k">running</span> <b id="a-running">0</b></span>
+        <span><span class="k">clients</span> <b id="a-clients">0</b></span>
+      </span>
+      <button id="approvals-btn" type="button" class="approvals" hidden>Approve <b id="a-pending">0</b></button>
+      <span id="status" class="link">offline</span>
+      <button id="toggle-right" type="button" class="icon" aria-label="Toggle workspace panel" title="Workspace panel">&#9707;</button>
+      <button id="logout" type="button" class="ghost">Sign out</button>
     </header>
 
     <aside id="left" aria-label="Projects and sessions">
-      <section class="panel" id="projects-panel">
-        <h2>Projects <button id="new-project-toggle" type="button" class="tiny" aria-expanded="false" aria-label="New project">+</button></h2>
+      <button id="new-session" type="button" class="new">+ New session</button>
+
+      <div class="group">
+        <div class="label">Projects
+          <button id="new-project-toggle" type="button" class="icon small" aria-expanded="false" aria-label="New project" title="New project">+</button>
+        </div>
         <ul class="list" id="project-list"></ul>
         <form id="new-project" class="stack" hidden>
-          <input id="np-name" placeholder="Name" maxlength="80" required aria-label="Project name">
+          <input id="np-name" placeholder="Project name" maxlength="80" required aria-label="Project name">
           <select id="np-workspace" aria-label="Workspace"></select>
-          <input id="np-vault" placeholder="Vault folder, e.g. /home/me/notes (optional)" aria-label="Obsidian vault folder">
+          <input id="np-vault" placeholder="Obsidian vault folder (optional)" aria-label="Obsidian vault folder">
           <select id="np-mode" aria-label="Vault access">
             <option value="read-only">Vault: read only</option>
             <option value="read-write-ask">Vault: ask before writing</option>
             <option value="read-write">Vault: write freely</option>
           </select>
-          <button type="submit">Create project</button>
+          <button type="submit" class="primary">Create project</button>
           <p id="np-error" class="alert" hidden></p>
         </form>
+      </div>
+
+      <div class="group grow">
+        <div class="label">Sessions <span id="s-count"></span></div>
+        <ul class="list" id="session-list"></ul>
+      </div>
+    </aside>
+
+    <main id="main">
+      <div id="log" aria-live="polite"></div>
+      <div class="composer-wrap">
+        <form id="composer" class="composer">
+          <textarea id="input" rows="1" placeholder="Message the agent" aria-label="Message the agent" disabled></textarea>
+          <div class="composer-bar">
+            <span class="hint">Enter to send · /note, /find, /scratch, /artifact, /context</span>
+            <button id="stop" type="button" class="ghost" hidden>Stop</button>
+            <button id="send" type="submit" class="primary" disabled>Send</button>
+          </div>
+        </form>
+      </div>
+    </main>
+
+    <aside id="right" aria-label="Workspace">
+      <nav id="tabs" role="tablist" aria-label="Workspace panels">
+        <button type="button" role="tab" data-tab="files" aria-selected="true">Files</button>
+        <button type="button" role="tab" data-tab="notes" aria-selected="false">Notes</button>
+        <button type="button" role="tab" data-tab="scratch" aria-selected="false">Scratch</button>
+        <button type="button" role="tab" data-tab="artifacts" aria-selected="false">Artifacts</button>
+        <button type="button" role="tab" data-tab="changes" aria-selected="false">Changes <span id="change-count">0</span></button>
+        <button type="button" role="tab" data-tab="project" aria-selected="false">Project</button>
+      </nav>
+
+      <section class="pane" id="pane-files" role="tabpanel">
+        <div id="fs-root" class="muted small"></div>
+        <div id="crumbs" class="crumbs"></div>
+        <ul class="list" id="grid"></ul>
       </section>
 
-      <section class="panel" id="project-panel" hidden>
-        <h2>Project <span class="tag" id="p-name">—</span></h2>
-        <dl class="kv">
-          <dt>Instructions</dt><dd id="p-instructions">—</dd>
-          <dt>Workspace</dt><dd id="p-workspace">—</dd>
-        </dl>
-        <div class="vault">
-          <div class="readout"><span>Vault</span><b id="p-vault">none</b></div>
+      <section class="pane" id="pane-notes" role="tabpanel" hidden>
+        <p class="muted" id="note-empty">No vault yet. Open the Project tab and attach an Obsidian folder.</p>
+        <form id="note-search" class="row" hidden>
+          <input id="note-query" placeholder="Search notes" aria-label="Search notes">
+          <button type="submit">Find</button>
+        </form>
+        <div class="small muted"><span id="note-count"></span></div>
+        <ul class="list" id="note-list"></ul>
+      </section>
+
+      <section class="pane" id="pane-scratch" role="tabpanel" hidden>
+        <p class="muted small">Temporary files for this session. Promote one into the project to keep it. Idle for 7 days, it is archived.</p>
+        <div id="scratch-crumbs" class="crumbs"></div>
+        <ul class="list" id="scratch-list"></ul>
+        <div class="label sub">Archived</div>
+        <ul class="list" id="archive-list"></ul>
+      </section>
+
+      <section class="pane" id="pane-artifacts" role="tabpanel" hidden>
+        <div class="small muted"><span id="artifact-count">0</span> saved</div>
+        <ul class="list" id="artifact-list"></ul>
+      </section>
+
+      <section class="pane" id="pane-changes" role="tabpanel" hidden>
+        <ul class="list" id="changelist"></ul>
+      </section>
+
+      <section class="pane" id="pane-project" role="tabpanel" hidden>
+        <div class="kvs">
+          <div><span class="muted">Project</span><b id="p-name">—</b></div>
+          <div><span class="muted">Workspace</span><b id="p-workspace">—</b></div>
+          <div><span class="muted">Instructions</span><b id="p-instructions">—</b></div>
+          <div><span class="muted">Vault</span><b id="p-vault">none</b></div>
+        </div>
+        <div class="stack">
+          <label class="small muted" for="p-mode">Vault access</label>
           <select id="p-mode" aria-label="Vault access">
             <option value="read-only">read only</option>
             <option value="read-write-ask">ask before writing</option>
@@ -75,87 +138,23 @@
             <input id="p-vault-path" placeholder="/path/to/vault" aria-label="Vault folder">
             <button type="submit">Attach</button>
           </form>
-          <button id="p-vault-detach" type="button" class="danger" hidden>Detach vault</button>
-          <p id="p-vault-error" class="alert" hidden></p>
+          <button id="p-vault-detach" type="button" class="ghost" hidden>Detach vault</button>
+          <p id="p-vault-error" class="alert small" hidden></p>
         </div>
-      </section>
-
-      <section class="panel" id="sessions-panel" hidden>
-        <h2>Sessions <span class="tag" id="s-count">0</span></h2>
-        <button id="new-session" type="button">+ New session</button>
-        <ul class="list" id="session-list"></ul>
-      </section>
-    </aside>
-
-    <main id="main" class="panel">
-      <div id="linkbar">
-        <span id="title">—</span>
-        <span class="row">
-          <span id="status">offline</span>
-          <button id="focus" type="button" title="Toggle focus mode">Focus</button>
-        </span>
-      </div>
-      <div id="log" aria-live="polite"></div>
-      <form id="composer">
-        <textarea id="input" rows="2" placeholder="Message the agent · /note /find /artifact" aria-label="Message the agent" disabled></textarea>
-        <button id="send" type="submit" disabled>Send</button>
-        <button id="stop" type="button" class="danger" hidden>Stop</button>
-      </form>
-    </main>
-
-    <aside id="right" aria-label="Workspace">
-      <nav id="tabs" role="tablist" aria-label="Workspace panels">
-        <button type="button" role="tab" data-tab="files" aria-selected="true">Files</button>
-        <button type="button" role="tab" data-tab="notes" aria-selected="false">Notes</button>
-        <button type="button" role="tab" data-tab="scratch" aria-selected="false">Scratch</button>
-        <button type="button" role="tab" data-tab="artifacts" aria-selected="false">Artifacts</button>
-        <button type="button" role="tab" data-tab="changes" aria-selected="false">Changes <span id="change-count" class="tag">0</span></button>
-      </nav>
-
-      <section class="panel pane" id="pane-files" role="tabpanel">
-        <h2>Files <span class="tag" id="fs-root"></span></h2>
-        <div id="crumbs"></div>
-        <div id="grid"></div>
-      </section>
-
-      <section class="panel pane" id="pane-notes" role="tabpanel" hidden>
-        <h2>Notes <span class="tag" id="note-count"></span></h2>
-        <p class="muted" id="note-empty">This project has no vault. Attach an Obsidian folder in the Project panel.</p>
-        <form id="note-search" class="row" hidden>
-          <input id="note-query" placeholder="Search notes" aria-label="Search notes">
-          <button type="submit">Find</button>
-        </form>
-        <ul class="list" id="note-list"></ul>
-      </section>
-
-      <section class="panel pane" id="pane-scratch" role="tabpanel" hidden>
-        <h2>Scratch <span class="tag">temporary</span></h2>
-        <p class="muted">Files the agent makes for this session. Promote one into the project to keep it. Idle for 7 days, it is archived.</p>
-        <div id="scratch-crumbs"></div>
-        <ul class="list" id="scratch-list"></ul>
-        <h2 class="sub">Archived</h2>
-        <ul class="list" id="archive-list"></ul>
-      </section>
-
-      <section class="panel pane" id="pane-artifacts" role="tabpanel" hidden>
-        <h2>Artifacts <span class="tag" id="artifact-count">0</span></h2>
-        <ul class="list" id="artifact-list"></ul>
-      </section>
-
-      <section class="panel pane" id="pane-changes" role="tabpanel" hidden>
-        <h2>Changes <span class="tag">this session</span></h2>
-        <ul class="list" id="changelist"></ul>
       </section>
     </aside>
 
     <nav id="mobile-nav" aria-label="Views">
-      <button type="button" data-view="left">Projects</button>
+      <button type="button" data-view="left">Sessions</button>
       <button type="button" data-view="chat" class="active">Chat</button>
       <button type="button" data-view="right">Workspace</button>
     </nav>
 
-    <div id="viewer" class="panel" role="dialog" aria-modal="true" aria-labelledby="viewer-title" hidden>
-      <h2><span id="viewer-title"></span><button id="viewer-close" type="button">Close</button></h2>
+    <div id="viewer" role="dialog" aria-modal="true" aria-labelledby="viewer-title" hidden>
+      <div class="viewer-head">
+        <span id="viewer-title"></span>
+        <button id="viewer-close" type="button" class="ghost">Close</button>
+      </div>
       <div id="viewer-actions"></div>
       <pre id="viewer-body" hidden></pre>
       <div id="viewer-md" class="md" hidden></div>

@@ -4,7 +4,6 @@
 
 window.HUD = (() => {
   const $ = (id) => document.getElementById(id);
-  const THEMES = ["tron", "amber", "matrix", "ember"];
   const history = new Map();
 
   function store(key, value) {
@@ -17,27 +16,8 @@ window.HUD = (() => {
     return null;
   }
 
-  function applyTheme(name) {
-    if (!THEMES.includes(name)) name = "tron";
-    document.documentElement.dataset.theme = name;
-    for (const button of document.querySelectorAll("[data-theme-pick]")) {
-      button.setAttribute("aria-pressed", String(button.dataset.themePick === name));
-    }
-  }
-
-  function initTheme() {
-    applyTheme(store("unchained-theme"));
-    for (const button of document.querySelectorAll("[data-theme-pick]")) {
-      button.addEventListener("click", () => {
-        applyTheme(button.dataset.themePick);
-        store("unchained-theme", button.dataset.themePick);
-      });
-    }
-    // Keeps several open views (and the demo's two frames) in step.
-    window.addEventListener("storage", (e) => {
-      if (e.key === "unchained-theme") applyTheme(e.newValue);
-    });
-  }
+  // One palette now (style.css). Kept so older pages can call it safely.
+  function initTheme() {}
 
   function bytes(n) {
     if (n == null) return "—";

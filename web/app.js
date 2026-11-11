@@ -227,7 +227,6 @@ async function selectProject(id) {
   }
   renderProjects();
   renderProjectPanel();
-  $("sessions-panel").hidden = false;
   const workspace = project.workspace;
   await Promise.all([loadInstructions(), loadNotes(), loadArtifacts()]);
   if (state.projectId !== id) return;
@@ -252,7 +251,6 @@ async function loadInstructions() {
 
 function renderProjectPanel() {
   const p = currentProject();
-  $("project-panel").hidden = !p;
   if (!p) return;
   text("p-name", p.name);
   text("p-workspace", p.workspace);
@@ -308,7 +306,7 @@ function renderSessions() {
       const active = s.id === state.current;
       button.className = `${active ? "active" : ""} ${(active ? state.running : s.running) ? "running" : ""}`.trim();
       button.textContent = `session ${short(s.id)}`;
-      button.append(Object.assign(document.createElement("small"), { textContent: new Date(s.created_ms).toLocaleString() }));
+      button.append(Object.assign(document.createElement("small"), { textContent: new Date(s.created_ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }));
       button.addEventListener("click", () => openSession(s.id));
       const remove = Object.assign(document.createElement("button"), {
         type: "button",
@@ -1027,7 +1025,8 @@ for (const button of document.querySelectorAll("#tabs [role='tab']")) {
   button.addEventListener("click", () => setTab(button.dataset.tab));
 }
 
-$("focus").addEventListener("click", () => $("app").classList.toggle("focus"));
+$("toggle-left").addEventListener("click", () => $("app").classList.toggle("no-left"));
+$("toggle-right").addEventListener("click", () => $("app").classList.toggle("no-right"));
 $("approvals-btn").addEventListener("click", reviewApproval);
 $("viewer-close").addEventListener("click", closeViewer);
 document.addEventListener("keydown", (e) => {
