@@ -70,6 +70,35 @@ be created in those, and every path a tool receives is resolved against the
 workspace root, rejecting `..` and symlink escapes. This is an in-process
 check, not a sandbox.
 
+### Projects (implemented)
+
+A project is a named workspace plus what belongs to it: its sessions, its
+artifacts, its instructions file and, optionally, one notes vault. Projects
+are stored in `<data_dir>/projects.json`. Every session belongs to exactly one
+project; sessions written before projects existed are adopted into a project
+named after their workspace.
+
+- **Instructions.** `AGENTS.md`, or `CLAUDE.md` if there is none, is read from
+  the workspace root at the start of every turn and given to the model.
+- **Vault.** An absolute path to an Obsidian-style folder of Markdown notes.
+  The agent reads notes with `search_notes` and `read_note`. Writes go through
+  `write_note`, whose access is set per project and enforced by the daemon:
+  `read-only` (default) refuses writes, `read-write-ask` asks each time, and
+  `read-write` writes freely. The stricter of the vault mode and the session
+  permission mode wins, so plan mode still refuses writes. Notes are walked
+  with symlinks and hidden folders skipped, so nothing outside the vault root
+  is listed or read.
+- **Scratch.** Each session has a directory under `<data_dir>/scratch/` for
+  temporary files. The agent writes there without approval, and the directory
+  is outside every project. `promote_scratch` copies a file into the project
+  and does need approval. Deleting a session deletes its scratch. A scratch
+  directory idle for seven days is archived to
+  `<data_dir>/archive/<session>-<ms>.tar.gz` with a JSON manifest, and its
+  files are restored only when the user asks.
+- **Artifacts.** `create_artifact` saves a named, versioned result (`html`,
+  `svg`, `markdown` or `code`) under the project. Saving an existing name adds a
+  version and keeps the older ones.
+
 ### Sandbox (planned)
 
 The hard boundary for spawned commands: Landlock and seccomp or bubblewrap on
@@ -101,20 +130,23 @@ A snapshot on a shadow Git ref before each mutation; one command rewinds.
 
 ## Interface
 
-The look takes its structure from sci-fi terminal dashboards: a central
-console framed by live telemetry, with a file browser underneath. It is
-built from scratch; no third-party assets.
+A dense, dark HUD with one accent colour per theme and an alert colour
+reserved for approvals and errors. It has three regions:
 
-- **Centre:** session tabs, the conversation, tool calls and results as terminal blocks, the composer.
-- **Left, the host:** clock, uptime, CPU graph and per-core bars, RAM, disk, GPU and VRAM when present, top processes. Fed by `GET /api/status`, sampled every two seconds.
-- **Right, the agent:** model, permission mode, context gauge, speed, session and client counts, pending approvals.
-- **Bottom:** the workspace file browser (`GET /api/workspaces/{name}/files`) with a read-only viewer, and the files changed in the current session.
-- **Rules:** one accent colour per theme plus an alert colour reserved for approvals and errors; glow only on chrome, never on conversation text; reduced-motion respected; no sound.
-- **Phone:** one view at a time (host, chat, agent, files) behind a bottom bar, with a badge when an approval is waiting.
+- **Left: projects and sessions.** Create a project from a workspace, optionally with a vault and its access mode. Under it, the project's instructions status and vault, then its sessions.
+- **Centre: the conversation.** Tool calls and results as terminal blocks, approvals inline, and the composer. `/new` starts a session. Other slash commands are passed to the agent.
+- **Right: workspace tabs.** Files (the project workspace), Notes (the vault, with search, rendered Markdown, `[[wikilinks]]` and backlinks), Scratch (this session's temporary files and the archive), Artifacts (rendered and versioned), and Changes.
+
+A status strip across the top shows host telemetry from `GET /api/status`
+(CPU, memory, disk, GPU, uptime), the permission mode, running sessions and
+clients, and a pending-approvals count.
+
+On a phone the regions become three views (projects, chat, workspace) behind a
+bottom bar, with a badge when an approval is waiting.
 
 The client talks to a backend object. `?demo` swaps the real HTTP and
 WebSocket backend for an in-browser simulation that speaks the same event
-protocol, which is what the GitHub Pages demo runs.
+protocol and exposes the same methods, which is what the GitHub Pages demo runs.
 
 **Host console (concept).** `web/host.html` sketches what the host machine
 shows on its own display: sessions across all workspaces, a merged activity
@@ -123,7 +155,7 @@ control. It runs on simulated data only. Making it real needs the model
 adapter, device pairing and a cross-session event stream.
 
 Not yet built: git status badges in the file browser, diff view, the
-terminal UI.
+terminal UI, and a `/plan` command (permission modes are daemon-wide, not per session).
 
 ## Remote access and security model
 
@@ -138,6 +170,8 @@ execution by design. The design treats that as the central fact.
 - Requests whose `Origin` does not match `Host` are refused, including WebSocket handshakes.
 - The web UI is served with a `default-src 'self'` content security policy and renders all server text as text.
 - Sessions exist only in registered workspaces.
+- Artifacts are served from `/frames/<key>/...`, outside the API. The key is random per daemon start and is sent only to signed-in clients. The response allows scripts and styles inline but no network, forms or navigation, and the frame is sandboxed without same-origin access, so an artifact cannot reach the daemon.
+- Vault and scratch paths are confined the same way as workspace paths, and vault paths are canonicalised when a project is created.
 
 **Planned**
 

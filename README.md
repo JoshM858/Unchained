@@ -27,17 +27,33 @@ cargo run -p unchained -- serve --workspace /path/to/a/project
 cargo run -p unchained -- token
 ```
 
-Open <http://127.0.0.1:7878>, paste the token, start a session. With the stub
-model, try `/ls`, `/read <file>` and `/write <file> <text>`. Writes pause for
-your approval; reload the page mid-approval and the request is still waiting.
+Open <http://127.0.0.1:7878>, paste the token, create a project from the
+workspace (add a vault folder if you have one), and start a session. With the
+stub model, try `/ls`, `/read <file>`, `/write <file> <text>`, `/note <text>`
+and `/artifact <name> html <markup>`. Writes pause for your approval; reload
+the page mid-approval and the request is still waiting.
+
+## Projects
+
+A project is a workspace plus its sessions, artifacts, and an optional
+Obsidian-style notes vault. Create one from the left panel.
+
+- **Instructions.** An `AGENTS.md` or `CLAUDE.md` in the workspace root is read at the start of every turn.
+- **Vault.** Point a project at a folder of Markdown notes. The agent can search and read them. Choose per project whether it may write: read only, ask before each write, or write freely. The Notes tab renders them, follows `[[wikilinks]]` and lists backlinks.
+- **Scratch.** Each session has temporary files outside the project. Promote one into the project to keep it; that asks for approval. Idle scratch is archived after seven days and restored when you ask.
+- **Artifacts.** Results the agent saves as versioned HTML, SVG, Markdown or code. HTML and SVG run in a sandboxed frame with no network access.
+
+Slash commands in the composer are passed to the agent. The stub model
+understands `/note`, `/find`, `/scratch`, `/scratch-ls`, `/promote`,
+`/artifact` and `/context`. `/new` starts a session.
 
 ## Interface
 
-The web UI is a dense, dark HUD: the conversation in the centre, live host
-telemetry on the left, agent state and pending approvals on the right, and a
-workspace file browser along the bottom. On a phone it collapses to one view
-at a time. Four colour themes; a focus mode hides everything but the
-conversation.
+The web UI is a dense, dark HUD with three regions: projects and sessions on
+the left, the conversation in the centre, and tabs for files, notes, scratch,
+artifacts and changes on the right. A status strip across the top carries host
+telemetry and approvals. On a phone it becomes three views. Four colour
+themes; a focus mode hides the side panels.
 
 To see it without running anything, open `/?demo` on a running daemon, or
 build the static demo that GitHub Pages publishes:
@@ -75,10 +91,10 @@ In order of preference:
 | Path | What it is |
 |---|---|
 | `crates/protocol` | Wire types: the session event log and client messages |
-| `crates/core` | Agent loop, tools, permission engine, workspaces, session store |
+| `crates/core` | Agent loop, tools, permission engine, workspaces, projects, notes, artifacts, scratch and archives, session store |
 | `crates/server` | Gateway: auth, HTTP and WebSocket API, embedded web UI |
 | `crates/cli` | The `unchained` binary (`serve`, `token`) |
-| `web/` | The web client, the simulated demo backend and the host-console concept. Plain HTML, CSS and JS; no build step |
+| `web/` | The web client, the Markdown renderer, the simulated demo backend and the host-console concept. Plain HTML, CSS and JS; no build step |
 | `scripts/build-demo.sh` | Assembles the static interface demo |
 | `docs/DESIGN.md` | Vision, architecture, security model, roadmap |
 
