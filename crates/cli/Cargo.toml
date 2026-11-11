@@ -1,0 +1,19 @@
+[package]
+name = "unchained"
+description = "An always-on, self-hosted coding agent"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "unchained"
+path = "src/main.rs"
+
+[dependencies]
+unchained-core.workspace = true
+unchained-server.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

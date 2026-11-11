@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Unchained</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <section id="login" hidden>
+    <form id="login-form">
+      <h1>Unchained</h1>
+      <p>Paste the access token from <code>unchained token</code> on the host.</p>
+      <input id="token" type="password" autocomplete="current-password" placeholder="Access token" required>
+      <button type="submit">Sign in</button>
+      <p id="login-error" class="error" hidden>That token was not accepted.</p>
+    </form>
+  </section>
+
+  <div id="app" hidden>
+    <aside>
+      <h1>Unchained</h1>
+      <form id="new-session">
+        <select id="workspace" aria-label="Workspace"></select>
+        <button type="submit">New session</button>
+      </form>
+      <ul id="sessions"></ul>
+      <button id="logout" class="quiet">Sign out</button>
+    </aside>
+    <main>
+      <header>
+        <span id="title">No session selected</span>
+        <span id="status"></span>
+      </header>
+      <div id="log" aria-live="polite"></div>
+      <form id="composer">
+        <textarea id="input" rows="2" placeholder="Message the agent" disabled></textarea>
+        <button id="send" type="submit" disabled>Send</button>
+        <button id="stop" type="button" class="danger" hidden>Stop</button>
+      </form>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
