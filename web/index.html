@@ -4,7 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Unchained</title>
-  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -19,120 +18,153 @@
   </section>
 
   <div id="app" data-view="chat" hidden>
-    <aside id="left" aria-label="Host machine">
-      <div class="panel">
-        <h2>Host <span class="tag" id="h-name">—</span></h2>
-        <div class="big" id="clock">--:--:--</div>
-        <div class="muted" id="date"></div>
+    <header id="strip" class="panel" aria-label="Status">
+      <span class="brand">Unchained</span>
+      <span class="meta" title="Host"><b id="h-name">—</b></span>
+      <span class="meta"><span class="k">cpu</span> <b id="h-cpu">—</b></span>
+      <span class="meta"><span class="k">ram</span> <b id="h-mem">—</b></span>
+      <span class="meta"><span class="k">disk</span> <b id="h-disk">—</b></span>
+      <span class="meta" id="h-gpu-panel" hidden><span class="k" id="h-gpu-name">gpu</span> <b id="h-gpu">—</b></span>
+      <span class="meta"><span class="k">up</span> <b id="h-uptime">—</b></span>
+      <span class="meta"><span class="k">mode</span> <b id="a-mode">—</b></span>
+      <span class="meta"><span class="k">running</span> <b id="a-running">0</b></span>
+      <span class="meta"><span class="k">clients</span> <b id="a-clients">0</b></span>
+      <button id="approvals-btn" type="button" class="danger" hidden>Approvals <b id="a-pending">0</b></button>
+      <span class="spacer"></span>
+      <div class="swatches" role="group" aria-label="Theme">
+        <button type="button" data-theme-pick="tron" aria-label="Tron theme"></button>
+        <button type="button" data-theme-pick="amber" aria-label="Amber theme"></button>
+        <button type="button" data-theme-pick="matrix" aria-label="Matrix theme"></button>
+        <button type="button" data-theme-pick="ember" aria-label="Ember theme"></button>
+      </div>
+      <button id="logout" type="button">Sign out</button>
+    </header>
+
+    <aside id="left" aria-label="Projects and sessions">
+      <section class="panel" id="projects-panel">
+        <h2>Projects <button id="new-project-toggle" type="button" class="tiny" aria-expanded="false" aria-label="New project">+</button></h2>
+        <ul class="list" id="project-list"></ul>
+        <form id="new-project" class="stack" hidden>
+          <input id="np-name" placeholder="Name" maxlength="80" required aria-label="Project name">
+          <select id="np-workspace" aria-label="Workspace"></select>
+          <input id="np-vault" placeholder="Vault folder, e.g. /home/me/notes (optional)" aria-label="Obsidian vault folder">
+          <select id="np-mode" aria-label="Vault access">
+            <option value="read-only">Vault: read only</option>
+            <option value="read-write-ask">Vault: ask before writing</option>
+            <option value="read-write">Vault: write freely</option>
+          </select>
+          <button type="submit">Create project</button>
+          <p id="np-error" class="alert" hidden></p>
+        </form>
+      </section>
+
+      <section class="panel" id="project-panel" hidden>
+        <h2>Project <span class="tag" id="p-name">—</span></h2>
         <dl class="kv">
-          <dt>Uptime</dt><dd id="h-uptime">—</dd>
-          <dt>Load</dt><dd id="h-load">—</dd>
-          <dt>OS</dt><dd id="h-os">—</dd>
+          <dt>Instructions</dt><dd id="p-instructions">—</dd>
+          <dt>Workspace</dt><dd id="p-workspace">—</dd>
         </dl>
-      </div>
-      <div class="panel">
-        <h2>CPU <span class="tag" id="h-core-count"></span></h2>
-        <div class="readout"><span>Usage</span><b id="h-cpu">—</b></div>
-        <svg class="spark" id="h-cpu-spark" aria-hidden="true"></svg>
-        <div class="cores" id="h-cores" aria-hidden="true"></div>
-      </div>
-      <div class="panel">
-        <h2>Memory</h2>
-        <div class="readout"><span>RAM</span><b id="h-mem">—</b></div>
-        <div class="bar" id="h-mem-bar"><i></i></div>
-        <div class="readout"><span>Disk</span><b id="h-disk">—</b></div>
-        <div class="bar" id="h-disk-bar"><i></i></div>
-      </div>
-      <div class="panel" id="h-gpu-panel" hidden>
-        <h2>GPU <span class="tag" id="h-gpu-temp"></span></h2>
-        <div class="readout"><span id="h-gpu-name">GPU</span><b id="h-gpu">—</b></div>
-        <svg class="spark" id="h-gpu-spark" aria-hidden="true"></svg>
-        <div class="readout"><span>VRAM</span><b id="h-vram">—</b></div>
-        <div class="bar" id="h-vram-bar"><i></i></div>
-      </div>
-      <div class="panel">
-        <h2>Processes</h2>
-        <table class="procs"><tbody id="h-procs"></tbody></table>
-      </div>
+        <div class="vault">
+          <div class="readout"><span>Vault</span><b id="p-vault">none</b></div>
+          <select id="p-mode" aria-label="Vault access">
+            <option value="read-only">read only</option>
+            <option value="read-write-ask">ask before writing</option>
+            <option value="read-write">write freely</option>
+          </select>
+          <form id="p-vault-form" class="row">
+            <input id="p-vault-path" placeholder="/path/to/vault" aria-label="Vault folder">
+            <button type="submit">Attach</button>
+          </form>
+          <button id="p-vault-detach" type="button" class="danger" hidden>Detach vault</button>
+          <p id="p-vault-error" class="alert" hidden></p>
+        </div>
+      </section>
+
+      <section class="panel" id="sessions-panel" hidden>
+        <h2>Sessions <span class="tag" id="s-count">0</span></h2>
+        <button id="new-session" type="button">+ New session</button>
+        <ul class="list" id="session-list"></ul>
+      </section>
     </aside>
 
     <main id="main" class="panel">
-      <div id="tabs">
-        <div id="tablist" role="tablist" aria-label="Sessions"></div>
-        <form id="new-session">
-          <select id="workspace" aria-label="Workspace"></select>
-          <button type="submit" title="New session" aria-label="New session">+</button>
-        </form>
-        <button id="focus" type="button" title="Toggle focus mode">Focus</button>
+      <div id="linkbar">
+        <span id="title">—</span>
+        <span class="row">
+          <span id="status">offline</span>
+          <button id="focus" type="button" title="Toggle focus mode">Focus</button>
+        </span>
       </div>
-      <div id="linkbar"><span id="title">—</span><span id="status">offline</span></div>
       <div id="log" aria-live="polite"></div>
       <form id="composer">
-        <textarea id="input" rows="2" placeholder="Message the agent" aria-label="Message the agent" disabled></textarea>
+        <textarea id="input" rows="2" placeholder="Message the agent · /note /find /artifact" aria-label="Message the agent" disabled></textarea>
         <button id="send" type="submit" disabled>Send</button>
         <button id="stop" type="button" class="danger" hidden>Stop</button>
       </form>
     </main>
 
-    <aside id="right" aria-label="Agent">
-      <div class="panel">
-        <h2>Agent <span class="tag" id="a-version"></span></h2>
-        <dl class="kv">
-          <dt>Model</dt><dd id="a-model">—</dd>
-          <dt>Mode</dt><dd id="a-mode">—</dd>
-          <dt>Speed</dt><dd id="a-tps">—</dd>
-        </dl>
-        <svg class="spark" id="a-tps-spark" aria-hidden="true"></svg>
-        <div class="readout"><span>Context</span><b id="a-ctx">—</b></div>
-        <div class="bar" id="a-ctx-bar"><i></i></div>
-      </div>
-      <div class="panel">
-        <h2>Link</h2>
-        <dl class="kv">
-          <dt>Sessions</dt><dd id="a-sessions">—</dd>
-          <dt>Running</dt><dd id="a-running">—</dd>
-          <dt>Clients</dt><dd id="a-clients">—</dd>
-        </dl>
-      </div>
-      <div class="panel" id="approvals-panel">
-        <h2>Approvals <span class="tag" id="a-pending">0</span></h2>
-        <div class="stack" id="approvals"><span class="muted">Nothing waiting.</span></div>
-      </div>
-      <div class="panel">
-        <h2>Display</h2>
-        <div class="swatches" role="group" aria-label="Theme">
-          <button type="button" data-theme-pick="tron" aria-label="Tron theme"></button>
-          <button type="button" data-theme-pick="amber" aria-label="Amber theme"></button>
-          <button type="button" data-theme-pick="matrix" aria-label="Matrix theme"></button>
-          <button type="button" data-theme-pick="ember" aria-label="Ember theme"></button>
-        </div>
-        <button id="logout" type="button">Sign out</button>
-      </div>
+    <aside id="right" aria-label="Workspace">
+      <nav id="tabs" role="tablist" aria-label="Workspace panels">
+        <button type="button" role="tab" data-tab="files" aria-selected="true">Files</button>
+        <button type="button" role="tab" data-tab="notes" aria-selected="false">Notes</button>
+        <button type="button" role="tab" data-tab="scratch" aria-selected="false">Scratch</button>
+        <button type="button" role="tab" data-tab="artifacts" aria-selected="false">Artifacts</button>
+        <button type="button" role="tab" data-tab="changes" aria-selected="false">Changes <span id="change-count" class="tag">0</span></button>
+      </nav>
+
+      <section class="panel pane" id="pane-files" role="tabpanel">
+        <h2>Files <span class="tag" id="fs-root"></span></h2>
+        <div id="crumbs"></div>
+        <div id="grid"></div>
+      </section>
+
+      <section class="panel pane" id="pane-notes" role="tabpanel" hidden>
+        <h2>Notes <span class="tag" id="note-count"></span></h2>
+        <p class="muted" id="note-empty">This project has no vault. Attach an Obsidian folder in the Project panel.</p>
+        <form id="note-search" class="row" hidden>
+          <input id="note-query" placeholder="Search notes" aria-label="Search notes">
+          <button type="submit">Find</button>
+        </form>
+        <ul class="list" id="note-list"></ul>
+      </section>
+
+      <section class="panel pane" id="pane-scratch" role="tabpanel" hidden>
+        <h2>Scratch <span class="tag">temporary</span></h2>
+        <p class="muted">Files the agent makes for this session. Promote one into the project to keep it. Idle for 7 days, it is archived.</p>
+        <div id="scratch-crumbs"></div>
+        <ul class="list" id="scratch-list"></ul>
+        <h2 class="sub">Archived</h2>
+        <ul class="list" id="archive-list"></ul>
+      </section>
+
+      <section class="panel pane" id="pane-artifacts" role="tabpanel" hidden>
+        <h2>Artifacts <span class="tag" id="artifact-count">0</span></h2>
+        <ul class="list" id="artifact-list"></ul>
+      </section>
+
+      <section class="panel pane" id="pane-changes" role="tabpanel" hidden>
+        <h2>Changes <span class="tag">this session</span></h2>
+        <ul class="list" id="changelist"></ul>
+      </section>
     </aside>
 
-    <section id="files" class="panel" aria-label="Files">
-      <h2>Filesystem <span class="tag" id="fs-root"></span></h2>
-      <div id="crumbs"></div>
-      <div id="grid"></div>
-    </section>
-    <section id="changes" class="panel" aria-label="Changes">
-      <h2>Changes <span class="tag" id="change-count">0</span></h2>
-      <ul id="changelist"></ul>
-    </section>
-
     <nav id="mobile-nav" aria-label="Views">
-      <button type="button" data-view="host">Host</button>
+      <button type="button" data-view="left">Projects</button>
       <button type="button" data-view="chat" class="active">Chat</button>
-      <button type="button" data-view="agent">Agent</button>
-      <button type="button" data-view="files">Files</button>
+      <button type="button" data-view="right">Workspace</button>
     </nav>
 
     <div id="viewer" class="panel" role="dialog" aria-modal="true" aria-labelledby="viewer-title" hidden>
       <h2><span id="viewer-title"></span><button id="viewer-close" type="button">Close</button></h2>
-      <pre id="viewer-body"></pre>
+      <div id="viewer-actions"></div>
+      <pre id="viewer-body" hidden></pre>
+      <div id="viewer-md" class="md" hidden></div>
+      <iframe id="viewer-frame" class="frame" sandbox="allow-scripts" title="Artifact" hidden></iframe>
+      <div id="viewer-links" class="links" hidden></div>
     </div>
   </div>
   <script src="hud.js"></script>
+  <script src="md.js"></script>
   <script src="demo.js"></script>
   <script src="app.js"></script>
 </body>

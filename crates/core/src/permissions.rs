@@ -20,6 +20,22 @@ pub enum Verdict {
     Deny,
 }
 
+impl Verdict {
+    /// The stricter of two verdicts: deny beats ask, ask beats allow.
+    pub fn stricter(self, other: Verdict) -> Verdict {
+        let rank = |v: Verdict| match v {
+            Verdict::Deny => 0,
+            Verdict::Ask => 1,
+            Verdict::Allow => 2,
+        };
+        if rank(other) < rank(self) {
+            other
+        } else {
+            self
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
     /// Read-only: anything that changes the host is denied.
@@ -138,5 +154,15 @@ mod tests {
         assert_eq!(p.decide("write_file", Effect::Write), Verdict::Deny);
         assert_eq!(p.decide("patch", Effect::Write), Verdict::Ask);
         assert_eq!(p.decide("shell", Effect::Execute), Verdict::Allow);
+    }
+
+    #[test]
+    fn stricter_verdict_wins() {
+        use Verdict::*;
+        assert_eq!(Allow.stricter(Ask), Ask);
+        assert_eq!(Ask.stricter(Allow), Ask);
+        assert_eq!(Deny.stricter(Allow), Deny);
+        assert_eq!(Allow.stricter(Deny), Deny);
+        assert_eq!(Allow.stricter(Allow), Allow);
     }
 }

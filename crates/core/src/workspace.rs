@@ -75,11 +75,46 @@ impl Workspace {
         }
         Ok(resolved)
     }
+
+    /// Like [`resolve`](Self::resolve) for a file that is about to be written:
+    /// the path must be plain (no `..`, no absolute parts), its missing parent
+    /// directories are created, and the result is then confined as usual.
+    pub fn prepare(&self, rel: &str) -> Result<PathBuf, WorkspaceError> {
+        let plain = Path::new(rel)
+            .components()
+            .all(|c| matches!(c, Component::Normal(_)));
+        if !plain || rel.is_empty() {
+            return Err(WorkspaceError::Escape(rel.to_string()));
+        }
+        if let Some(parent) = Path::new(rel)
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(self.root.join(parent))
+                .map_err(|e| WorkspaceError::Io(rel.to_string(), e))?;
+        }
+        self.resolve(rel)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prepare_creates_parents_and_refuses_escapes() {
+        let outer = tempfile::tempdir().unwrap();
+        let root = outer.path().join("ws");
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = Workspace::new("ws", &root).unwrap();
+        let p = ws.prepare("Inbox/2026/note.md").unwrap();
+        assert!(p.starts_with(ws.root()));
+        assert!(root.join("Inbox/2026").is_dir());
+        assert!(ws.prepare("../x.md").is_err());
+        assert!(ws.prepare("/abs.md").is_err());
+        assert!(ws.prepare("a/../../x.md").is_err());
+        assert!(ws.prepare("").is_err());
+    }
 
     #[test]
     fn resolves_inside_and_rejects_escapes() {

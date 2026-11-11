@@ -5,22 +5,29 @@
 //! the loop: a turn keeps going when every browser is closed, and a client
 //! that reconnects replays what it missed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, oneshot};
-use unchained_protocol::{Event, EventKind, FileEntry, SessionInfo, WorkspaceInfo};
+use unchained_protocol::{
+    ArchiveInfo, ArtifactMeta, CreateProject, Event, EventKind, FileEntry, NoteEntry, Project,
+    SearchHit, SessionInfo, UpdateProject, VaultMode, WorkspaceInfo,
+};
 
+use crate::artifacts::ArtifactStore;
 use crate::model::ModelAdapter;
-use crate::permissions::{Mode, Policy, Verdict};
-use crate::tools::{ReadFile, Tool, ToolRegistry};
+use crate::notes;
+use crate::permissions::{Effect, Mode, Policy, Rule, Verdict};
+use crate::project::{load_instructions, now_ms, ProjectHandle, ProjectStore};
+use crate::scratch;
+use crate::tools::{self, ToolEnv, ToolRegistry, ALWAYS_ALLOWED};
 use crate::workspace::Workspace;
 
 /// Model round-trips allowed in one turn before the loop stops itself.
@@ -31,13 +38,6 @@ const BROADCAST_CAPACITY: usize = 1024;
 /// Most entries a single directory listing returns.
 const MAX_DIR_ENTRIES: usize = 1000;
 
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum SubmitError {
     #[error("a turn is already running in this session")]
@@ -47,8 +47,19 @@ pub enum SubmitError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SessionMeta {
     id: String,
+    /// Empty only in sessions written before projects existed; those are adopted on open.
+    #[serde(default)]
+    project: String,
     workspace: String,
     created_ms: u64,
+}
+
+fn verdict_for_vault(mode: VaultMode) -> Verdict {
+    match mode {
+        VaultMode::ReadOnly => Verdict::Deny,
+        VaultMode::ReadWriteAsk => Verdict::Ask,
+        VaultMode::ReadWrite => Verdict::Allow,
+    }
 }
 
 struct Deps {
@@ -61,6 +72,9 @@ struct Deps {
 pub struct Session {
     meta: SessionMeta,
     workspace: Workspace,
+    project: ProjectHandle,
+    scratch: Workspace,
+    artifacts: ArtifactStore,
     deps: Arc<Deps>,
     events: Mutex<Vec<Event>>,
     tx: broadcast::Sender<Event>,
@@ -78,6 +92,7 @@ impl Session {
     pub fn info(&self) -> SessionInfo {
         SessionInfo {
             id: self.meta.id.clone(),
+            project: self.meta.project.clone(),
             workspace: self.meta.workspace.clone(),
             created_ms: self.meta.created_ms,
             running: self.running.load(Ordering::SeqCst),
@@ -149,7 +164,14 @@ impl Session {
         }
     }
 
+    fn vault(&self) -> Option<Workspace> {
+        let path = self.project.read().unwrap().vault.clone()?;
+        Workspace::new("vault", path).ok()
+    }
+
     async fn run_turn(&self) {
+        // Read fresh each turn, so an edit to AGENTS.md applies to the next message.
+        let instructions = load_instructions(&self.workspace);
         for _ in 0..MAX_STEPS {
             if self.cancel.load(Ordering::SeqCst) {
                 self.emit(EventKind::Error {
@@ -158,7 +180,12 @@ impl Session {
                 return;
             }
             let history = self.events.lock().unwrap().clone();
-            let turn = match self.deps.model.next_turn(&history).await {
+            let turn = match self
+                .deps
+                .model
+                .next_turn(&history, instructions.as_ref())
+                .await
+            {
                 Ok(t) => t,
                 Err(e) => {
                     self.emit(EventKind::Error {
@@ -201,7 +228,9 @@ impl Session {
             self.emit(result(false, format!("unknown tool '{tool_name}'")));
             return;
         };
-        let allowed = match self.deps.policy.decide(&tool_name, tool.effect()) {
+        let vault = self.vault();
+        let verdict = self.verdict(&tool_name, tool.effect());
+        let allowed = match verdict {
             Verdict::Allow => true,
             Verdict::Deny => false,
             Verdict::Ask => self.ask(&call_id, &tool_name, &input).await,
@@ -210,10 +239,27 @@ impl Session {
             self.emit(result(false, "permission denied".into()));
             return;
         }
-        match tool.run(&self.workspace, &input).await {
+        let env = ToolEnv {
+            workspace: &self.workspace,
+            scratch: &self.scratch,
+            vault: vault.as_ref(),
+            artifacts: Some(&self.artifacts),
+        };
+        match tool.run(&env, &input).await {
             Ok(output) => self.emit(result(true, output)),
             Err(e) => self.emit(result(false, format!("{e:#}"))),
         }
+    }
+
+    /// The policy verdict for a call. Note writes are additionally bound by
+    /// the project's vault mode; the stricter answer wins.
+    fn verdict(&self, tool: &str, effect: Effect) -> Verdict {
+        let policy = self.deps.policy.decide(tool, effect);
+        if tool == "write_note" {
+            let mode = self.project.read().unwrap().vault_mode;
+            return policy.stricter(verdict_for_vault(mode));
+        }
+        policy
     }
 
     async fn ask(&self, call_id: &str, tool: &str, input: &serde_json::Value) -> bool {
@@ -249,16 +295,17 @@ fn append_line(path: &Path, event: &Event) -> Result<()> {
     Ok(())
 }
 
-/// Owns every session and the workspaces they may run in.
+/// Owns every session, every project and the workspaces they may run in.
 pub struct SessionManager {
     data_dir: PathBuf,
     workspaces: Vec<Workspace>,
     deps: Arc<Deps>,
+    projects: ProjectStore,
     sessions: RwLock<HashMap<String, Arc<Session>>>,
 }
 
 impl SessionManager {
-    /// Open `data_dir`, restoring any sessions persisted there.
+    /// Open `data_dir`, restoring any sessions and projects persisted there.
     pub fn open(
         data_dir: impl Into<PathBuf>,
         workspaces: Vec<Workspace>,
@@ -279,7 +326,7 @@ impl SessionManager {
     pub fn open_with_timeout(
         data_dir: impl Into<PathBuf>,
         workspaces: Vec<Workspace>,
-        policy: Policy,
+        mut policy: Policy,
         model: Arc<dyn ModelAdapter>,
         tools: Arc<ToolRegistry>,
         approval_timeout: Duration,
@@ -287,6 +334,17 @@ impl SessionManager {
         let data_dir = data_dir.into();
         fs::create_dir_all(data_dir.join("sessions"))
             .with_context(|| format!("creating {}", data_dir.display()))?;
+        fs::create_dir_all(scratch::scratch_root(&data_dir))?;
+        // Appended after the caller's rules, so they cannot be overridden
+        // by accident: these tools only touch daemon-owned space.
+        for tool in ALWAYS_ALLOWED {
+            policy.rules.push(Rule {
+                tool: Some(tool.to_string()),
+                effect: None,
+                verdict: Verdict::Allow,
+            });
+        }
+        let projects = ProjectStore::open(&data_dir)?;
         let manager = Self {
             data_dir,
             workspaces,
@@ -296,6 +354,7 @@ impl SessionManager {
                 policy,
                 approval_timeout,
             }),
+            projects,
             sessions: RwLock::new(HashMap::new()),
         };
         manager.restore()?;
@@ -335,28 +394,7 @@ impl SessionManager {
         let ws = self
             .workspace(workspace)
             .ok_or_else(|| anyhow!("unknown workspace '{workspace}'"))?;
-        let path = ws.resolve(rel)?;
-        let mut dir = tokio::fs::read_dir(&path)
-            .await
-            .with_context(|| rel.to_string())?;
-        let mut entries = Vec::new();
-        while let Some(entry) = dir.next_entry().await? {
-            if entries.len() >= MAX_DIR_ENTRIES {
-                break;
-            }
-            // Symlinks are listed as files; opening one still goes through
-            // `Workspace::resolve`, which refuses targets outside the root.
-            let Ok(meta) = entry.metadata().await else {
-                continue;
-            };
-            entries.push(FileEntry {
-                name: entry.file_name().to_string_lossy().into_owned(),
-                dir: meta.is_dir(),
-                size: if meta.is_file() { meta.len() } else { 0 },
-            });
-        }
-        entries.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.name.cmp(&b.name)));
-        Ok(entries)
+        list_entries(ws, rel)
     }
 
     /// Read a text file inside a workspace, with the same limits as the
@@ -365,22 +403,112 @@ impl SessionManager {
         let ws = self
             .workspace(workspace)
             .ok_or_else(|| anyhow!("unknown workspace '{workspace}'"))?;
-        ReadFile.run(ws, &serde_json::json!({ "path": rel })).await
+        tools::read_text(ws, rel)
     }
 
-    pub fn create(&self, workspace: &str) -> Result<Arc<Session>> {
+    // ---- projects ----
+
+    pub fn projects(&self) -> Vec<Project> {
+        self.projects.list()
+    }
+
+    pub fn project(&self, id: &str) -> Option<Project> {
+        self.projects.get(id).map(|h| h.read().unwrap().clone())
+    }
+
+    pub fn create_project(&self, input: CreateProject) -> Result<Project> {
+        self.projects.create(input, &self.workspaces)
+    }
+
+    pub fn update_project(&self, id: &str, input: UpdateProject) -> Result<Project> {
+        self.projects.update(id, input)
+    }
+
+    fn project_handle(&self, id: &str) -> Result<ProjectHandle> {
+        self.projects
+            .get(id)
+            .ok_or_else(|| anyhow!("no project '{id}'"))
+    }
+
+    fn artifacts_dir(&self, project: &str) -> PathBuf {
+        self.data_dir
+            .join("projects")
+            .join(project)
+            .join("artifacts")
+    }
+
+    /// The project's instructions file, as the agent would read it.
+    pub fn instructions(&self, project: &str) -> Result<Option<crate::project::Instructions>> {
+        let handle = self.project_handle(project)?;
+        let ws_name = handle.read().unwrap().workspace.clone();
         let ws = self
-            .workspace(workspace)
-            .ok_or_else(|| anyhow!("unknown workspace '{workspace}'"))?;
+            .workspace(&ws_name)
+            .ok_or_else(|| anyhow!("unknown workspace '{ws_name}'"))?;
+        Ok(load_instructions(ws))
+    }
+
+    pub fn artifacts(&self, project: &str) -> Result<Vec<ArtifactMeta>> {
+        self.project_handle(project)?;
+        ArtifactStore::new(self.artifacts_dir(project)).list()
+    }
+
+    pub fn artifact(
+        &self,
+        project: &str,
+        name: &str,
+        version: Option<u32>,
+    ) -> Result<(ArtifactMeta, u32, String)> {
+        self.project_handle(project)?;
+        ArtifactStore::new(self.artifacts_dir(project)).read(name, version)
+    }
+
+    fn vault(&self, project: &str) -> Result<Workspace> {
+        let p = self
+            .project(project)
+            .ok_or_else(|| anyhow!("no project '{project}'"))?;
+        let path = p
+            .vault
+            .ok_or_else(|| anyhow!("this project has no notes vault"))?;
+        Ok(Workspace::new("vault", path)?)
+    }
+
+    pub fn notes(&self, project: &str) -> Result<Vec<NoteEntry>> {
+        notes::list_notes(&self.vault(project)?)
+    }
+
+    pub fn note(&self, project: &str, path: &str) -> Result<String> {
+        notes::read_note(&self.vault(project)?, path)
+    }
+
+    pub fn backlinks(&self, project: &str, path: &str) -> Result<Vec<String>> {
+        notes::backlinks(&self.vault(project)?, path)
+    }
+
+    pub fn search_notes(&self, project: &str, query: &str) -> Result<Vec<SearchHit>> {
+        notes::search(&self.vault(project)?, query, 50)
+    }
+
+    // ---- sessions ----
+
+    /// Start a session in a project.
+    pub fn create(&self, project: &str) -> Result<Arc<Session>> {
+        let p = self
+            .project(project)
+            .ok_or_else(|| anyhow!("no project '{project}'"))?;
+        let ws = self
+            .workspace(&p.workspace)
+            .ok_or_else(|| anyhow!("unknown workspace '{}'", p.workspace))?
+            .clone();
         let meta = SessionMeta {
             id: uuid::Uuid::new_v4().simple().to_string(),
+            project: p.id.clone(),
             workspace: ws.name().to_string(),
             created_ms: now_ms(),
         };
         let dir = self.data_dir.join("sessions").join(&meta.id);
         fs::create_dir_all(&dir)?;
         fs::write(dir.join("meta.json"), serde_json::to_vec_pretty(&meta)?)?;
-        let session = self.build(meta, ws.clone(), Vec::new(), dir.join("events.jsonl"));
+        let session = self.build(meta, ws, Vec::new(), dir.join("events.jsonl"))?;
         self.sessions
             .write()
             .unwrap()
@@ -392,17 +520,73 @@ impl SessionManager {
         self.sessions.read().unwrap().get(id).cloned()
     }
 
-    /// Newest first.
-    pub fn list(&self) -> Vec<SessionInfo> {
+    /// Sessions, newest first. With `project`, only that project's.
+    pub fn list(&self, project: Option<&str>) -> Vec<SessionInfo> {
         let mut infos: Vec<_> = self
             .sessions
             .read()
             .unwrap()
             .values()
             .map(|s| s.info())
+            .filter(|s| project.is_none_or(|p| s.project == p))
             .collect();
         infos.sort_by_key(|s| std::cmp::Reverse(s.created_ms));
         infos
+    }
+
+    /// Delete a session and its scratch space. Refused while a turn runs.
+    pub fn delete(&self, id: &str) -> Result<()> {
+        let session = self.get(id).ok_or_else(|| anyhow!("no session '{id}'"))?;
+        if session.info().running {
+            bail!("the session is running; interrupt it first");
+        }
+        self.sessions.write().unwrap().remove(id);
+        fs::remove_dir_all(self.data_dir.join("sessions").join(id))?;
+        let scratch_dir = scratch::scratch_root(&self.data_dir).join(id);
+        if scratch_dir.exists() {
+            fs::remove_dir_all(&scratch_dir)?;
+        }
+        Ok(())
+    }
+
+    fn scratch_ws(&self, session: &str) -> Result<Workspace> {
+        self.get(session)
+            .ok_or_else(|| anyhow!("no session '{session}'"))?;
+        let dir = scratch::scratch_root(&self.data_dir).join(session);
+        fs::create_dir_all(&dir)?;
+        Ok(Workspace::new("scratch", dir)?)
+    }
+
+    pub fn scratch_list(&self, session: &str, rel: &str) -> Result<Vec<FileEntry>> {
+        list_entries(&self.scratch_ws(session)?, rel)
+    }
+
+    pub fn scratch_read(&self, session: &str, rel: &str) -> Result<String> {
+        tools::read_text(&self.scratch_ws(session)?, rel)
+    }
+
+    /// Archive idle scratch space (see [`scratch::sweep`]). Running sessions are left alone.
+    pub fn sweep_scratch(&self, now: SystemTime) -> Result<Vec<ArchiveInfo>> {
+        let running: HashSet<String> = self
+            .sessions
+            .read()
+            .unwrap()
+            .values()
+            .filter(|s| s.info().running)
+            .map(|s| s.id().to_string())
+            .collect();
+        scratch::sweep(&self.data_dir, now, scratch::MAX_AGE, |s| {
+            running.contains(s)
+        })
+    }
+
+    pub fn archives(&self) -> Result<Vec<ArchiveInfo>> {
+        scratch::list_archives(&self.data_dir)
+    }
+
+    /// Restore an archive into its session's scratch directory.
+    pub fn restore_archive(&self, name: &str) -> Result<String> {
+        scratch::restore(&self.data_dir, name)
     }
 
     fn build(
@@ -411,11 +595,19 @@ impl SessionManager {
         workspace: Workspace,
         events: Vec<Event>,
         log_path: PathBuf,
-    ) -> Arc<Session> {
+    ) -> Result<Arc<Session>> {
+        let project = self.project_handle(&meta.project)?;
+        let scratch_dir = scratch::scratch_root(&self.data_dir).join(&meta.id);
+        fs::create_dir_all(&scratch_dir)?;
+        let scratch = Workspace::new("scratch", &scratch_dir)?;
+        let artifacts = ArtifactStore::new(self.artifacts_dir(&meta.project));
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
-        Arc::new(Session {
+        Ok(Arc::new(Session {
             meta,
             workspace,
+            project,
+            scratch,
+            artifacts,
             deps: Arc::clone(&self.deps),
             events: Mutex::new(events),
             tx,
@@ -423,7 +615,7 @@ impl SessionManager {
             running: AtomicBool::new(false),
             cancel: AtomicBool::new(false),
             log_path,
-        })
+        }))
     }
 
     fn restore(&self) -> Result<()> {
@@ -448,8 +640,8 @@ impl SessionManager {
         if !meta_path.is_file() {
             return Ok(None);
         }
-        let meta: SessionMeta = serde_json::from_slice(&fs::read(&meta_path)?)?;
-        let Some(ws) = self.workspace(&meta.workspace) else {
+        let mut meta: SessionMeta = serde_json::from_slice(&fs::read(&meta_path)?)?;
+        let Some(ws) = self.workspace(&meta.workspace).cloned() else {
             tracing::warn!(
                 "session {} belongs to workspace '{}', which is not registered; skipping",
                 meta.id,
@@ -457,6 +649,11 @@ impl SessionManager {
             );
             return Ok(None);
         };
+        if meta.project.is_empty() {
+            // Written before projects existed: adopt it into one named after its workspace.
+            meta.project = self.projects.ensure_for_workspace(&meta.workspace)?;
+            fs::write(&meta_path, serde_json::to_vec_pretty(&meta)?)?;
+        }
         let log_path = dir.join("events.jsonl");
         let mut events = Vec::new();
         if log_path.is_file() {
@@ -471,7 +668,7 @@ impl SessionManager {
         let interrupted = events
             .last()
             .is_some_and(|e| !matches!(e.kind, EventKind::TurnFinished));
-        let session = self.build(meta, ws.clone(), events, log_path);
+        let session = self.build(meta, ws, events, log_path)?;
         if interrupted {
             session.emit(EventKind::Error {
                 message: "the daemon stopped while this turn was running".into(),
@@ -480,6 +677,31 @@ impl SessionManager {
         }
         Ok(Some(session))
     }
+}
+
+/// Directory listing used by the file browser: folders first, then by name.
+fn list_entries(ws: &Workspace, rel: &str) -> Result<Vec<FileEntry>> {
+    let path = ws.resolve(rel)?;
+    let dir = std::fs::read_dir(&path).with_context(|| rel.to_string())?;
+    let mut entries = Vec::new();
+    for entry in dir {
+        let entry = entry?;
+        if entries.len() >= MAX_DIR_ENTRIES {
+            break;
+        }
+        // Symlinks are listed as files; opening one still goes through
+        // `Workspace::resolve`, which refuses targets outside the root.
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        entries.push(FileEntry {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            dir: meta.is_dir(),
+            size: if meta.is_file() { meta.len() } else { 0 },
+        });
+    }
+    entries.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.name.cmp(&b.name)));
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -491,6 +713,7 @@ mod tests {
     struct Fixture {
         _dirs: (tempfile::TempDir, tempfile::TempDir),
         data: PathBuf,
+        root: PathBuf,
         ws: Workspace,
     }
 
@@ -500,6 +723,7 @@ mod tests {
         fs::write(root.path().join("hello.txt"), "hi there").unwrap();
         Fixture {
             data: data.path().to_path_buf(),
+            root: root.path().to_path_buf(),
             ws: Workspace::new("demo", root.path()).unwrap(),
             _dirs: (data, root),
         }
@@ -517,6 +741,17 @@ mod tests {
         .unwrap()
     }
 
+    fn project(m: &SessionManager, vault: Option<&Path>, mode: VaultMode) -> String {
+        m.create_project(CreateProject {
+            name: "p".into(),
+            workspace: "demo".into(),
+            vault: vault.map(|v| v.display().to_string()),
+            vault_mode: Some(mode),
+        })
+        .unwrap()
+        .id
+    }
+
     async fn until_finished(rx: &mut broadcast::Receiver<Event>) -> Vec<EventKind> {
         let mut seen = Vec::new();
         loop {
@@ -532,11 +767,20 @@ mod tests {
         }
     }
 
+    async fn wait_for_request(rx: &mut broadcast::Receiver<Event>) -> String {
+        loop {
+            if let EventKind::PermissionRequested { call_id, .. } = rx.recv().await.unwrap().kind {
+                return call_id;
+            }
+        }
+    }
+
     #[tokio::test]
     async fn read_runs_without_asking_and_log_survives_restart() {
         let f = fixture();
         let m = manager(&f, Mode::Ask, Duration::from_secs(5));
-        let s = m.create("demo").unwrap();
+        let pid = project(&m, None, VaultMode::ReadOnly);
+        let s = m.create(&pid).unwrap();
         let (_, mut rx) = s.subscribe_from(0);
         s.submit_user_message("/read hello.txt".into()).unwrap();
         let seen = until_finished(&mut rx).await;
@@ -553,6 +797,7 @@ mod tests {
         let m = manager(&f, Mode::Ask, Duration::from_secs(5));
         let s = m.get(&id).expect("session restored");
         assert_eq!(s.info().last_seq, count);
+        assert_eq!(s.info().project, pid);
         let (replay, _) = s.subscribe_from(1);
         assert_eq!(replay.len() as u64, count - 1);
         assert_eq!(replay[0].seq, 2);
@@ -562,7 +807,8 @@ mod tests {
     async fn write_waits_for_approval() {
         let f = fixture();
         let m = manager(&f, Mode::Ask, Duration::from_secs(5));
-        let s = m.create("demo").unwrap();
+        let pid = project(&m, None, VaultMode::ReadOnly);
+        let s = m.create(&pid).unwrap();
         let (_, mut rx) = s.subscribe_from(0);
         s.submit_user_message("/write out.txt some text".into())
             .unwrap();
@@ -570,19 +816,15 @@ mod tests {
             s.submit_user_message("again".into()),
             Err(SubmitError::Busy)
         );
-        let call_id = loop {
-            if let EventKind::PermissionRequested { call_id, .. } = rx.recv().await.unwrap().kind {
-                break call_id;
-            }
-        };
-        assert!(!f.ws.root().join("out.txt").exists());
+        let call_id = wait_for_request(&mut rx).await;
+        assert!(!f.root.join("out.txt").exists());
         assert!(s.resolve_permission(&call_id, true));
         let seen = until_finished(&mut rx).await;
         assert!(seen
             .iter()
             .any(|k| matches!(k, EventKind::ToolResult { ok: true, .. })));
         assert_eq!(
-            fs::read_to_string(f.ws.root().join("out.txt")).unwrap(),
+            fs::read_to_string(f.root.join("out.txt")).unwrap(),
             "some text"
         );
         assert!(!s.info().running);
@@ -594,14 +836,11 @@ mod tests {
 
         // Explicit denial.
         let m = manager(&f, Mode::Ask, Duration::from_secs(5));
-        let s = m.create("demo").unwrap();
+        let pid = project(&m, None, VaultMode::ReadOnly);
+        let s = m.create(&pid).unwrap();
         let (_, mut rx) = s.subscribe_from(0);
         s.submit_user_message("/write a.txt x".into()).unwrap();
-        let call_id = loop {
-            if let EventKind::PermissionRequested { call_id, .. } = rx.recv().await.unwrap().kind {
-                break call_id;
-            }
-        };
+        let call_id = wait_for_request(&mut rx).await;
         s.resolve_permission(&call_id, false);
         let seen = until_finished(&mut rx).await;
         assert!(seen
@@ -610,7 +849,7 @@ mod tests {
 
         // Nobody answers.
         let m = manager(&f, Mode::Ask, Duration::from_millis(50));
-        let s = m.create("demo").unwrap();
+        let s = m.create(&pid).unwrap();
         let (_, mut rx) = s.subscribe_from(0);
         s.submit_user_message("/write a.txt x".into()).unwrap();
         let seen = until_finished(&mut rx).await;
@@ -621,7 +860,7 @@ mod tests {
 
         // Plan mode never asks.
         let m = manager(&f, Mode::Plan, Duration::from_secs(5));
-        let s = m.create("demo").unwrap();
+        let s = m.create(&pid).unwrap();
         let (_, mut rx) = s.subscribe_from(0);
         s.submit_user_message("/write a.txt x".into()).unwrap();
         let seen = until_finished(&mut rx).await;
@@ -629,35 +868,177 @@ mod tests {
             .iter()
             .any(|k| matches!(k, EventKind::PermissionRequested { .. })));
 
-        assert!(!f.ws.root().join("a.txt").exists());
+        assert!(!f.root.join("a.txt").exists());
     }
 
     #[tokio::test]
     async fn interrupt_denies_pending_request() {
         let f = fixture();
         let m = manager(&f, Mode::Ask, Duration::from_secs(30));
-        let s = m.create("demo").unwrap();
+        let pid = project(&m, None, VaultMode::ReadOnly);
+        let s = m.create(&pid).unwrap();
         let (_, mut rx) = s.subscribe_from(0);
         s.submit_user_message("/write a.txt x".into()).unwrap();
-        loop {
-            if let EventKind::PermissionRequested { .. } = rx.recv().await.unwrap().kind {
-                break;
-            }
-        }
+        wait_for_request(&mut rx).await;
         s.interrupt();
         let seen = until_finished(&mut rx).await;
         assert!(seen.iter().any(|k| matches!(
             k,
             EventKind::PermissionResolved { allowed: false, by, .. } if by == "interrupt"
         )));
-        assert!(!f.ws.root().join("a.txt").exists());
+        assert!(!f.root.join("a.txt").exists());
         assert!(m.create("nope").is_err());
+    }
+
+    #[tokio::test]
+    async fn vault_mode_is_enforced_by_the_daemon() {
+        let f = fixture();
+        let vault = tempfile::tempdir().unwrap();
+        let note = vault.path().join("Inbox/hello-there.md");
+
+        // read-only: refused outright, no approval is ever requested.
+        let m = manager(&f, Mode::AutoEdit, Duration::from_secs(5));
+        let pid = project(&m, Some(vault.path()), VaultMode::ReadOnly);
+        let s = m.create(&pid).unwrap();
+        let (_, mut rx) = s.subscribe_from(0);
+        s.submit_user_message("/note hello there".into()).unwrap();
+        let seen = until_finished(&mut rx).await;
+        assert!(!seen
+            .iter()
+            .any(|k| matches!(k, EventKind::PermissionRequested { .. })));
+        assert!(seen
+            .iter()
+            .any(|k| matches!(k, EventKind::ToolResult { ok: false, .. })));
+        assert!(!note.exists());
+
+        // read-write-ask: asks, then writes once allowed.
+        let pid = m
+            .update_project(
+                &pid,
+                UpdateProject {
+                    vault: None,
+                    vault_mode: Some(VaultMode::ReadWriteAsk),
+                },
+            )
+            .unwrap()
+            .id;
+        let s = m.create(&pid).unwrap();
+        let (_, mut rx) = s.subscribe_from(0);
+        s.submit_user_message("/note hello there".into()).unwrap();
+        let call_id = wait_for_request(&mut rx).await;
+        assert!(!note.exists());
+        s.resolve_permission(&call_id, true);
+        until_finished(&mut rx).await;
+        assert!(note.exists());
+
+        // read-write under auto-edit: writes without asking.
+        let pid = m
+            .update_project(
+                &pid,
+                UpdateProject {
+                    vault: None,
+                    vault_mode: Some(VaultMode::ReadWrite),
+                },
+            )
+            .unwrap()
+            .id;
+        let s = m.create(&pid).unwrap();
+        let (_, mut rx) = s.subscribe_from(0);
+        s.submit_user_message("/note second thought".into())
+            .unwrap();
+        let seen = until_finished(&mut rx).await;
+        assert!(!seen
+            .iter()
+            .any(|k| matches!(k, EventKind::PermissionRequested { .. })));
+        assert!(vault.path().join("Inbox/second-thought.md").exists());
+    }
+
+    #[tokio::test]
+    async fn scratch_and_artifacts_need_no_approval_even_in_plan_mode() {
+        let f = fixture();
+        let m = manager(&f, Mode::Plan, Duration::from_secs(5));
+        let pid = project(&m, None, VaultMode::ReadOnly);
+        let s = m.create(&pid).unwrap();
+        let (_, mut rx) = s.subscribe_from(0);
+        s.submit_user_message("/scratch draft.md # hi".into())
+            .unwrap();
+        let seen = until_finished(&mut rx).await;
+        assert!(!seen
+            .iter()
+            .any(|k| matches!(k, EventKind::PermissionRequested { .. })));
+        assert!(seen
+            .iter()
+            .any(|k| matches!(k, EventKind::ToolResult { ok: true, .. })));
+        assert_eq!(m.scratch_read(s.id(), "draft.md").unwrap(), "# hi");
+
+        s.submit_user_message("/artifact report markdown # Report".into())
+            .unwrap();
+        until_finished(&mut rx).await;
+        let (meta, version, text) = m.artifact(&pid, "report", None).unwrap();
+        assert_eq!(
+            (meta.kind.as_str(), version, text.as_str()),
+            ("markdown", 1, "# Report")
+        );
+        assert!(!f.root.join("report").exists());
+    }
+
+    #[tokio::test]
+    async fn project_instructions_reach_the_model() {
+        let f = fixture();
+        std::fs::write(f.root.join("AGENTS.md"), "Use tabs.").unwrap();
+        let m = manager(&f, Mode::Ask, Duration::from_secs(5));
+        let pid = project(&m, None, VaultMode::ReadOnly);
+        let s = m.create(&pid).unwrap();
+        let (_, mut rx) = s.subscribe_from(0);
+        s.submit_user_message("/context".into()).unwrap();
+        let seen = until_finished(&mut rx).await;
+        assert!(seen.iter().any(|k| matches!(
+            k,
+            EventKind::AssistantMessage { text } if text.contains("AGENTS.md")
+        )));
+    }
+
+    #[tokio::test]
+    async fn sessions_from_before_projects_are_adopted() {
+        let f = fixture();
+        let m = manager(&f, Mode::Ask, Duration::from_secs(5));
+        let s = m.create(&project(&m, None, VaultMode::ReadOnly)).unwrap();
+        let id = s.id().to_string();
+        drop((s, m));
+        // Strip the project from the session, and remove the projects file,
+        // as an old daemon would have left them.
+        let meta_path = f.data.join("sessions").join(&id).join("meta.json");
+        let mut meta: serde_json::Value =
+            serde_json::from_slice(&fs::read(&meta_path).unwrap()).unwrap();
+        meta.as_object_mut().unwrap().remove("project");
+        fs::write(&meta_path, meta.to_string()).unwrap();
+        fs::remove_file(f.data.join("projects.json")).unwrap();
+
+        let m = manager(&f, Mode::Ask, Duration::from_secs(5));
+        let adopted = m.get(&id).expect("adopted, not dropped").info().project;
+        assert!(!adopted.is_empty());
+        assert_eq!(m.project(&adopted).unwrap().workspace, "demo");
+    }
+
+    #[tokio::test]
+    async fn delete_removes_the_session_and_its_scratch() {
+        let f = fixture();
+        let m = manager(&f, Mode::Ask, Duration::from_secs(5));
+        let pid = project(&m, None, VaultMode::ReadOnly);
+        let s = m.create(&pid).unwrap();
+        let id = s.id().to_string();
+        m.scratch_list(&id, ".").unwrap();
+        fs::write(scratch::scratch_root(&f.data).join(&id).join("x.txt"), "x").unwrap();
+        m.delete(&id).unwrap();
+        assert!(m.get(&id).is_none());
+        assert!(!f.data.join("sessions").join(&id).exists());
+        assert!(!scratch::scratch_root(&f.data).join(&id).exists());
     }
 
     #[tokio::test]
     async fn browsing_is_confined_to_registered_workspaces() {
         let f = fixture();
-        fs::create_dir(f.ws.root().join("src")).unwrap();
+        fs::create_dir(f.root.join("src")).unwrap();
         let m = manager(&f, Mode::Ask, Duration::from_secs(5));
         let names: Vec<_> = m
             .list_files("demo", ".")
