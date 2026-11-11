@@ -4,7 +4,7 @@ name: Interface demo
 # Requires Settings -> Pages -> Source set to "GitHub Actions".
 on:
   push:
-    branches: [main, claude/sharp-babbage-ytz53p]
+    branches: [main, claude/sharp-babbage-ytz53p, claude/peaceful-mccarthy-vviq1q]
     paths: ["web/**", "scripts/build-demo.sh", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
